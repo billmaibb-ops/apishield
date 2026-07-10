@@ -10,10 +10,10 @@ const features = [
 ]
 
 const stats = [
-  { value: '10M+', label: 'API calls/day managed' },
-  { value: '99.99%', label: 'Uptime SLA' },
-  { value: '< 5ms', label: 'Latency added' },
-  { value: '500+', label: 'Companies trust us' },
+  { value: '60s', label: 'To go live — no code changes' },
+  { value: '$0', label: 'To get started, forever free tier' },
+  { value: 'MIT', label: 'Open source core, no lock-in' },
+  { value: '∞', label: 'Scale as you grow' },
 ]
 
 const plans = [
