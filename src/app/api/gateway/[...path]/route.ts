@@ -1,31 +1,58 @@
 /**
  * APIShield Gateway Proxy
  *
- * This is the real gateway. Every request to:
- *   /api/gateway/{path}?api_key=sk_live_xxx
- * or with header:
- *   X-API-Key: sk_live_xxx
+ * Handles every request to /api/gateway/{path}
  *
- * 1. Validates the API key against Redis
- * 2. Enforces per-minute rate limits
- * 3. Forwards the request to the key's configured backend
- * 4. Returns the upstream response with APIShield rate-limit headers
+ * Feature set:
+ *   • API key auth       — X-API-Key / ?api_key= / Authorization: Bearer sk_live_xxx
+ *   • JWT / HS256 auth   — Bearer <signed_jwt> (when key.authType = 'jwt')
+ *   • Per-minute rate limiting
+ *   • IP allowlist policy
+ *   • Max request-size policy
+ *   • Header injection / stripping policy
+ *   • WebSocket upgrade detection + key validation + WS URL redirect
+ *   • GraphQL POST passthrough (content-type preserved)
+ *   • LLM token usage tracking (OpenAI / Anthropic compatible)
+ *   • Per-key latency and error-rate tracking
+ *   • Runs on Vercel Edge Runtime for lowest cold-start latency
  */
+
+export const runtime = 'edge'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { redis, isRedisConfigured } from '@/lib/redis'
+import { verifyJwt } from '@/lib/jwt'
+import { enforceIpAllowlist, enforceMaxRequestSize, buildHeaderPolicy } from '@/lib/policies'
 import type { ApiKey } from '@/lib/keys'
 import type { Backend } from '@/lib/backends'
 
-// ─── Helpers ───────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function extractApiKey(req: NextRequest): string | null {
+function getClientIp(req: NextRequest): string {
   return (
-    req.headers.get('x-api-key') ||
-    req.nextUrl.searchParams.get('api_key') ||
-    req.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ||
-    null
+    req.headers.get('x-forwarded-for')?.split(',')[0].trim() ||
+    req.headers.get('x-real-ip') ||
+    ''
   )
+}
+
+/** Extract the API key identifier AND any separate Bearer token. */
+function extractCredentials(req: NextRequest): {
+  keyIdentifier: string | null
+  bearerToken: string | null
+} {
+  const keyHeader = req.headers.get('x-api-key')
+  const keyParam  = req.nextUrl.searchParams.get('api_key')
+  const authHeader = req.headers.get('authorization')
+  const bearerMatch = authHeader?.match(/^Bearer\s+(.+)$/i)
+  const bearerToken = bearerMatch?.[1] ?? null
+
+  // For JWT-auth keys: keyIdentifier comes from header/param; bearerToken is the JWT.
+  // For api_key auth: keyIdentifier can come from any of the three sources.
+  return {
+    keyIdentifier: keyHeader || keyParam || bearerToken,
+    bearerToken,
+  }
 }
 
 async function resolveKey(keyValue: string): Promise<ApiKey | null> {
@@ -47,32 +74,50 @@ async function enforceRateLimit(
   limit: number
 ): Promise<{ allowed: boolean; calls: number; resetAt: number }> {
   const minute = Math.floor(Date.now() / 60000)
-  const rlKey = `rl:${keyId}:${minute}`
-  const calls = await redis.incr(rlKey)
-  if (calls === 1) await redis.expire(rlKey, 120) // 2-min TTL covers window overlap
-  const resetAt = (minute + 1) * 60000
-  return { allowed: calls <= limit, calls, resetAt }
+  const rlKey  = `rl:${keyId}:${minute}`
+  const calls  = await redis.incr(rlKey)
+  if (calls === 1) await redis.expire(rlKey, 120)
+  return { allowed: calls <= limit, calls, resetAt: (minute + 1) * 60000 }
 }
 
-async function trackCall(keyId: string): Promise<void> {
+async function trackCall(keyId: string, latencyMs: number, isError: boolean): Promise<void> {
   const today = new Date().toISOString().split('T')[0]
-  // Fire-and-forget — don't await so it doesn't slow the proxy
-  Promise.all([
+  const ops: Promise<unknown>[] = [
     redis.incr(`calls:${keyId}:${today}`),
     redis.expire(`calls:${keyId}:${today}`, 86400 * 8),
     redis.incr(`calls:total:${today}`),
     redis.expire(`calls:total:${today}`, 86400 * 8),
-  ]).catch(() => { /* non-critical */ })
+    redis.incrby(`lat_total:${keyId}:${today}`, latencyMs),
+    redis.expire(`lat_total:${keyId}:${today}`, 86400 * 8),
+    redis.incr(`lat_count:${keyId}:${today}`),
+    redis.expire(`lat_count:${keyId}:${today}`, 86400 * 8),
+  ]
+  if (isError) {
+    ops.push(redis.incr(`errors:${keyId}:${today}`))
+    ops.push(redis.expire(`errors:${keyId}:${today}`, 86400 * 8))
+  }
+  Promise.all(ops).catch(() => { /* non-critical */ })
 }
 
-// ─── Main handler ─────────────────────────────────────────────────────────
+async function trackTokens(keyId: string, totalTokens: number): Promise<void> {
+  const today = new Date().toISOString().split('T')[0]
+  Promise.all([
+    redis.incrby(`tokens:${keyId}:${today}`, totalTokens),
+    redis.expire(`tokens:${keyId}:${today}`, 86400 * 8),
+    redis.incrby(`tokens:total:${today}`, totalTokens),
+    redis.expire(`tokens:total:${today}`, 86400 * 8),
+  ]).catch(() => {})
+}
+
+// ─── Main handler ─────────────────────────────────────────────────────────────
 
 async function handle(
   req: NextRequest,
   { params }: { params: { path: string[] } }
 ): Promise<NextResponse> {
+  const startTime = Date.now()
 
-  // 0. Redis must be configured
+  // ── 0. Redis guard ────────────────────────────────────────────────────────
   if (!isRedisConfigured()) {
     return NextResponse.json(
       {
@@ -84,110 +129,204 @@ async function handle(
     )
   }
 
-  // 1. Extract and validate API key
-  const keyValue = extractApiKey(req)
-  if (!keyValue) {
+  // ── 1. WebSocket upgrade detection ────────────────────────────────────────
+  // Serverless can't hold persistent WS connections, so we validate the key
+  // and return the direct backend WS URL for the client to connect to.
+  if (req.headers.get('upgrade')?.toLowerCase() === 'websocket') {
+    const { keyIdentifier } = extractCredentials(req)
+    if (!keyIdentifier) {
+      return NextResponse.json({ error: 'Missing API key for WebSocket upgrade' }, { status: 401 })
+    }
+    const wsKey = await resolveKey(keyIdentifier)
+    if (!wsKey || wsKey.status !== 'active') {
+      return NextResponse.json({ error: 'Invalid or revoked API key' }, { status: 403 })
+    }
+    const wsBackend = await resolveBackend(wsKey.backendId)
+    if (!wsBackend?.active) {
+      return NextResponse.json({ error: 'Backend not found or inactive' }, { status: 503 })
+    }
+    const path = params.path.join('/')
+    const sp = new URLSearchParams(req.nextUrl.searchParams)
+    sp.delete('api_key')
+    const wsBase = wsBackend.url
+      .replace(/^https:\/\//, 'wss://')
+      .replace(/^http:\/\//, 'ws://')
+      .replace(/\/$/, '')
+    const wsUrl = `${wsBase}/${path}${sp.toString() ? `?${sp}` : ''}`
+    return NextResponse.json(
+      {
+        error: 'WebSocket upgrade requires a direct connection',
+        hint: 'Connect your WebSocket client directly to wsUrl below',
+        wsUrl,
+        keyName: wsKey.name,
+      },
+      { status: 426, headers: { Upgrade: 'websocket', 'X-WS-Backend-URL': wsUrl } }
+    )
+  }
+
+  // ── 2. Extract credentials ────────────────────────────────────────────────
+  const { keyIdentifier, bearerToken } = extractCredentials(req)
+  if (!keyIdentifier) {
     return NextResponse.json(
       {
         error: 'Missing API key',
-        hint: 'Pass your key via ?api_key= query param or X-API-Key header',
+        hint: 'Pass via X-API-Key header, ?api_key= query param, or Authorization: Bearer <key>',
         example: `${req.nextUrl.origin}/api/gateway/your/path?api_key=sk_live_xxx`,
       },
       { status: 401 }
     )
   }
 
-  const keyData = await resolveKey(keyValue)
+  // ── 3. Resolve key record ────────────────────────────────────────────────
+  const keyData = await resolveKey(keyIdentifier)
   if (!keyData) {
-    return NextResponse.json(
-      { error: 'Invalid API key' },
-      { status: 403 }
-    )
+    return NextResponse.json({ error: 'Invalid API key' }, { status: 403 })
   }
-
   if (keyData.status !== 'active') {
-    return NextResponse.json(
-      { error: 'API key is revoked' },
-      { status: 403 }
-    )
+    return NextResponse.json({ error: 'API key is revoked' }, { status: 403 })
   }
 
-  // 2. Rate limiting
+  // ── 4. JWT validation (authType = 'jwt') ──────────────────────────────────
+  if (keyData.authType === 'jwt') {
+    if (!bearerToken) {
+      return NextResponse.json(
+        {
+          error: 'JWT required',
+          hint: 'This key requires Authorization: Bearer <jwt_token> in addition to the X-API-Key / ?api_key identifier',
+        },
+        { status: 401 }
+      )
+    }
+    if (!keyData.jwtSecret) {
+      return NextResponse.json(
+        { error: 'JWT auth misconfigured — key has no jwtSecret' },
+        { status: 500 }
+      )
+    }
+    const payload = await verifyJwt(bearerToken, keyData.jwtSecret)
+    if (!payload) {
+      return NextResponse.json(
+        {
+          error: 'Invalid or expired JWT',
+          hint: 'Ensure the token is signed with HS256 using the correct secret and has not expired',
+        },
+        { status: 401 }
+      )
+    }
+  }
+
+  // ── 5. Policy enforcement ─────────────────────────────────────────────────
+  if (keyData.policies) {
+    const clientIp = getClientIp(req)
+
+    const ipResult = enforceIpAllowlist(clientIp, keyData.policies)
+    if (!ipResult.allowed) {
+      return NextResponse.json(
+        { error: ipResult.error, details: ipResult.details },
+        { status: ipResult.status ?? 403 }
+      )
+    }
+
+    const sizeResult = enforceMaxRequestSize(req.headers.get('content-length'), keyData.policies)
+    if (!sizeResult.allowed) {
+      return NextResponse.json(
+        { error: sizeResult.error, details: sizeResult.details },
+        { status: sizeResult.status ?? 413 }
+      )
+    }
+  }
+
+  // ── 6. Rate limiting ──────────────────────────────────────────────────────
   const { allowed, calls, resetAt } = await enforceRateLimit(keyData.id, keyData.rateLimit)
   const remaining = Math.max(0, keyData.rateLimit - calls)
 
   const rateLimitHeaders = {
-    'X-RateLimit-Limit': String(keyData.rateLimit),
+    'X-RateLimit-Limit':     String(keyData.rateLimit),
     'X-RateLimit-Remaining': String(remaining),
-    'X-RateLimit-Reset': String(resetAt),
-    'X-RateLimit-Policy': `${keyData.rateLimit};w=60`,
-    'X-Proxied-By': 'APIShield',
+    'X-RateLimit-Reset':     String(resetAt),
+    'X-RateLimit-Policy':    `${keyData.rateLimit};w=60`,
+    'X-Proxied-By':          'APIShield',
   }
 
   if (!allowed) {
+    const retryAfter = Math.ceil((resetAt - Date.now()) / 1000)
     return NextResponse.json(
       {
         error: 'Rate limit exceeded',
         limit: keyData.rateLimit,
         window: '1 minute',
-        retryAfter: Math.ceil((resetAt - Date.now()) / 1000),
+        retryAfter,
       },
       {
         status: 429,
-        headers: { ...rateLimitHeaders, 'Retry-After': String(Math.ceil((resetAt - Date.now()) / 1000)) },
+        headers: { ...rateLimitHeaders, 'Retry-After': String(retryAfter) },
       }
     )
   }
 
-  // 3. Resolve backend
+  // ── 7. Resolve backend ────────────────────────────────────────────────────
   const backend = await resolveBackend(keyData.backendId)
-  if (!backend || !backend.active) {
+  if (!backend?.active) {
     return NextResponse.json(
-      {
-        error: 'Backend not found or inactive',
-        hint: 'Configure a backend at /backends and attach it to this API key',
-      },
+      { error: 'Backend not found or inactive' },
       { status: 503, headers: rateLimitHeaders }
     )
   }
 
-  // 4. Build target URL
+  // ── 8. Build target URL ───────────────────────────────────────────────────
   const path = params.path.join('/')
   const searchParams = new URLSearchParams(req.nextUrl.searchParams)
-  searchParams.delete('api_key') // never forward the shield key
-
+  searchParams.delete('api_key')
   const queryString = searchParams.toString()
   const targetUrl = `${backend.url}/${path}${queryString ? `?${queryString}` : ''}`
 
-  // 5. Forward request
+  // ── 9. Build forward headers ──────────────────────────────────────────────
   const forwardHeaders: Record<string, string> = {
-    'X-Forwarded-By': 'APIShield',
-    'X-API-Key-Name': keyData.name,
+    'X-Forwarded-By':   'APIShield',
+    'X-API-Key-Name':   keyData.name,
     'X-Forwarded-Host': req.headers.get('host') || '',
-    'X-Forwarded-For': req.headers.get('x-forwarded-for') || req.ip || '',
-    'X-Real-IP': req.ip || '',
+    'X-Forwarded-For':  getClientIp(req),
   }
 
-  const contentType = req.headers.get('content-type')
-  if (contentType) forwardHeaders['Content-Type'] = contentType
+  // Policy: inject + strip
+  if (keyData.policies) {
+    const { inject, strip } = buildHeaderPolicy(keyData.policies)
+    Object.assign(forwardHeaders, inject)
+    for (const h of strip) delete forwardHeaders[h]
 
-  const accept = req.headers.get('accept')
-  if (accept) forwardHeaders['Accept'] = accept
+    // Also apply strip to pass-through headers
+    const passThrough = ['content-type', 'accept', 'accept-encoding', 'accept-language']
+    for (const h of passThrough) {
+      if (!strip.has(h)) {
+        const v = req.headers.get(h)
+        if (v) forwardHeaders[h] = v
+      }
+    }
+  } else {
+    // No policy: pass all safe headers through
+    for (const h of ['content-type', 'accept', 'accept-encoding', 'accept-language']) {
+      const v = req.headers.get(h)
+      if (v) forwardHeaders[h] = v
+    }
+  }
 
-  const forwardInit: RequestInit & { duplex?: string } = {
+  // ── 10. Proxy request ─────────────────────────────────────────────────────
+  const forwardInit: RequestInit = {
     method: req.method,
     headers: forwardHeaders,
   }
 
   if (req.method !== 'GET' && req.method !== 'HEAD') {
+    // In Edge Runtime, pass the ReadableStream directly
     forwardInit.body = req.body
-    forwardInit.duplex = 'half'
+    ;(forwardInit as Record<string, unknown>)['duplex'] = 'half'
   }
 
   let upstream: Response
   try {
-    upstream = await fetch(targetUrl, forwardInit as RequestInit)
+    upstream = await fetch(targetUrl, forwardInit)
   } catch (err) {
+    trackCall(keyData.id, Date.now() - startTime, true)
     return NextResponse.json(
       {
         error: 'Backend unreachable',
@@ -199,33 +338,55 @@ async function handle(
     )
   }
 
-  // 6. Track usage (non-blocking)
-  trackCall(keyData.id)
+  const latencyMs = Date.now() - startTime
+  const isError   = upstream.status >= 400
 
-  // 7. Return upstream response with APIShield headers added
+  // ── 11. Track usage (non-blocking) ───────────────────────────────────────
+  trackCall(keyData.id, latencyMs, isError)
+
+  // ── 12. LLM token tracking ────────────────────────────────────────────────
+  // We read the body into a buffer once and then check it for token counts.
   const body = await upstream.arrayBuffer()
 
-  const responseHeaders: Record<string, string> = { ...rateLimitHeaders }
+  if (
+    backend.type === 'llm' &&
+    upstream.headers.get('content-type')?.includes('application/json') &&
+    !isError
+  ) {
+    try {
+      const json = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>
+      const usage = json?.usage as Record<string, number> | undefined
+      if (usage) {
+        // OpenAI: usage.total_tokens | Anthropic: usage.input_tokens + usage.output_tokens
+        const total = usage.total_tokens
+          ?? ((usage.input_tokens ?? 0) + (usage.output_tokens ?? 0))
+        if (total > 0) trackTokens(keyData.id, total)
+      }
+    } catch { /* non-critical */ }
+  }
 
-  // Pass through upstream content-type
-  const upstreamContentType = upstream.headers.get('content-type')
-  if (upstreamContentType) responseHeaders['Content-Type'] = upstreamContentType
+  // ── 13. Return upstream response ──────────────────────────────────────────
+  const responseHeaders: Record<string, string> = {
+    ...rateLimitHeaders,
+    'X-Response-Time': `${latencyMs}ms`,
+  }
 
-  // Pass through useful upstream headers
-  const passthroughHeaders = ['cache-control', 'etag', 'last-modified', 'content-encoding']
-  for (const h of passthroughHeaders) {
+  const upstreamCt = upstream.headers.get('content-type')
+  if (upstreamCt) responseHeaders['Content-Type'] = upstreamCt
+
+  for (const h of ['cache-control', 'etag', 'last-modified', 'content-encoding']) {
     const v = upstream.headers.get(h)
     if (v) responseHeaders[h] = v
   }
 
   return new NextResponse(body, {
-    status: upstream.status,
+    status:     upstream.status,
     statusText: upstream.statusText,
-    headers: responseHeaders,
+    headers:    responseHeaders,
   })
 }
 
-// Export all HTTP methods — they all go through the same proxy logic
+// All HTTP methods go through the same proxy logic
 export const GET     = handle
 export const POST    = handle
 export const PUT     = handle

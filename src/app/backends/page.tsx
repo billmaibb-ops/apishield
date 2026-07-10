@@ -10,6 +10,8 @@ type Backend = {
   active: boolean
   createdAt: string
   description?: string
+  type?: 'rest' | 'llm'
+  llmProvider?: string
 }
 
 export default function BackendsPage() {
@@ -18,7 +20,7 @@ export default function BackendsPage() {
   const [configured, setConfigured] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
-  const [form, setForm] = useState({ name: '', url: '', description: '' })
+  const [form, setForm] = useState({ name: '', url: '', description: '', type: 'rest', llmProvider: '' })
   const [saving, setSaving] = useState(false)
 
   function showToast(msg: string) {
@@ -47,14 +49,17 @@ export default function BackendsPage() {
       const res = await fetch('/api/backends', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          llmProvider: form.type === 'llm' && form.llmProvider ? form.llmProvider : undefined,
+        }),
       })
       if (!res.ok) {
         const err = await res.json()
         showToast(`Error: ${err.error}`)
         return
       }
-      setForm({ name: '', url: '', description: '' })
+      setForm({ name: '', url: '', description: '', type: 'rest', llmProvider: '' })
       setShowCreate(false)
       await load()
       showToast('Backend added!')
@@ -93,9 +98,9 @@ export default function BackendsPage() {
             { label: '🔑 API Keys', href: '/dashboard' },
             { label: '🔀 Backends', href: '/backends', active: true },
             { label: '📈 Analytics', href: '/analytics' },
+            { label: '🌐 Developer Portal', href: '/portal' },
             { label: '📖 Docs', href: '/docs' },
             { label: '💰 Pricing', href: '/pricing' },
-            { label: '⚙️ Settings', href: '#' },
           ].map(item => (
             <Link key={item.label} href={item.href}
               className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
@@ -198,6 +203,32 @@ export default function BackendsPage() {
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500"
                 />
               </div>
+              <div className="grid md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm text-gray-600 mb-1 block">Backend Type</label>
+                  <select
+                    value={form.type}
+                    onChange={e => setForm(f => ({ ...f, type: e.target.value, llmProvider: '' }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+                    <option value="rest">REST API (default)</option>
+                    <option value="llm">AI / LLM — enables token tracking</option>
+                  </select>
+                </div>
+                {form.type === 'llm' && (
+                  <div>
+                    <label className="text-sm text-gray-600 mb-1 block">LLM Provider</label>
+                    <select
+                      value={form.llmProvider}
+                      onChange={e => setForm(f => ({ ...f, llmProvider: e.target.value }))}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+                      <option value="">Select provider…</option>
+                      <option value="openai">OpenAI</option>
+                      <option value="anthropic">Anthropic</option>
+                      <option value="custom">Custom / Other</option>
+                    </select>
+                  </div>
+                )}
+              </div>
               <div className="flex gap-3">
                 <button
                   onClick={createBackend}
@@ -241,6 +272,11 @@ export default function BackendsPage() {
                       }`}>
                         {b.active ? '● Active' : '○ Inactive'}
                       </span>
+                      {b.type === 'llm' && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                          🤖 AI / LLM{b.llmProvider ? ` · ${b.llmProvider}` : ''}
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       <code className="text-sm text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded font-mono">{b.url}</code>

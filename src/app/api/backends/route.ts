@@ -32,7 +32,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'url must be a valid URL (e.g. https://api.myservice.com)' }, { status: 400 })
     }
 
-    const backend = await createBackend(name.trim(), url.trim(), stripPrefix, description)
+    const { type = 'rest', llmProvider } = body
+    const backend = await createBackend(name.trim(), url.trim(), stripPrefix, description, type, llmProvider)
     return NextResponse.json({ backend }, { status: 201 })
   } catch (err) {
     return NextResponse.json({ error: 'Failed to create backend', details: String(err) }, { status: 500 })

@@ -9,6 +9,10 @@ export type Backend = {
   active: boolean
   createdAt: string
   description?: string
+  /** 'rest' (default) or 'llm' — enables token usage tracking from OpenAI-style responses */
+  type?: 'rest' | 'llm'
+  /** LLM provider for display and future provider-specific handling */
+  llmProvider?: 'openai' | 'anthropic' | 'custom'
 }
 
 function generateId(): string {
@@ -19,7 +23,9 @@ export async function createBackend(
   name: string,
   url: string,
   stripPrefix?: string,
-  description?: string
+  description?: string,
+  type: 'rest' | 'llm' = 'rest',
+  llmProvider?: 'openai' | 'anthropic' | 'custom'
 ): Promise<Backend> {
   const id = generateId()
   // Normalize: strip trailing slash
@@ -31,6 +37,8 @@ export async function createBackend(
     active: true,
     createdAt: new Date().toISOString(),
     description,
+    type,
+    ...(llmProvider ? { llmProvider } : {}),
   }
   await redis.set(`backend:${id}`, JSON.stringify(backend))
   await redis.sadd('backends:list', id)

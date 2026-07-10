@@ -30,7 +30,15 @@ export async function POST(req: NextRequest) {
   }
   try {
     const body = await req.json()
-    const { name, rateLimit = 1000, backendId, description } = body
+    const {
+      name,
+      rateLimit = 1000,
+      backendId,
+      description,
+      authType = 'api_key',
+      jwtSecret,
+      policies,
+    } = body
 
     if (!name?.trim()) {
       return NextResponse.json({ error: 'name is required' }, { status: 400 })
@@ -38,8 +46,19 @@ export async function POST(req: NextRequest) {
     if (!backendId?.trim()) {
       return NextResponse.json({ error: 'backendId is required' }, { status: 400 })
     }
+    if (authType === 'jwt' && !jwtSecret?.trim()) {
+      return NextResponse.json({ error: 'jwtSecret is required when authType is jwt' }, { status: 400 })
+    }
 
-    const key = await createKey(name.trim(), Number(rateLimit), backendId.trim(), description)
+    const key = await createKey(
+      name.trim(),
+      Number(rateLimit),
+      backendId.trim(),
+      description,
+      authType,
+      jwtSecret?.trim() || undefined,
+      policies || undefined
+    )
     return NextResponse.json({ key }, { status: 201 })
   } catch (err) {
     return NextResponse.json({ error: 'Failed to create key', details: String(err) }, { status: 500 })

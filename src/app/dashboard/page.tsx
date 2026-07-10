@@ -11,6 +11,7 @@ type ApiKey = {
   backendId: string
   createdAt: string
   callsToday: number
+  authType?: 'api_key' | 'jwt'
 }
 
 type Backend = {
@@ -34,6 +35,8 @@ export default function DashboardPage() {
   const [newName, setNewName] = useState('')
   const [newLimit, setNewLimit] = useState('1000')
   const [newBackendId, setNewBackendId] = useState('')
+  const [newAuthType, setNewAuthType] = useState<'api_key' | 'jwt'>('api_key')
+  const [newJwtSecret, setNewJwtSecret] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
@@ -73,11 +76,18 @@ export default function DashboardPage() {
 
   const createKey = async () => {
     if (!newName.trim() || !newBackendId) return
+    if (newAuthType === 'jwt' && !newJwtSecret.trim()) { showToast('JWT secret is required'); return }
     try {
       const res = await fetch('/api/keys', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newName.trim(), rateLimit: parseInt(newLimit) || 1000, backendId: newBackendId }),
+        body: JSON.stringify({
+          name: newName.trim(),
+          rateLimit: parseInt(newLimit) || 1000,
+          backendId: newBackendId,
+          authType: newAuthType,
+          jwtSecret: newAuthType === 'jwt' ? newJwtSecret.trim() : undefined,
+        }),
       })
       if (!res.ok) {
         const err = await res.json()
@@ -87,6 +97,8 @@ export default function DashboardPage() {
       setNewName('')
       setNewLimit('1000')
       setNewBackendId('')
+      setNewAuthType('api_key')
+      setNewJwtSecret('')
       setShowCreate(false)
       await loadData()
       showToast('API key created!')
@@ -169,9 +181,9 @@ export default function DashboardPage() {
             { label: '🔑 API Keys', href: '/dashboard' },
             { label: '🔀 Backends', href: '/backends' },
             { label: '📈 Analytics', href: '/analytics' },
+            { label: '🌐 Developer Portal', href: '/portal' },
             { label: '📖 Docs', href: '/docs' },
             { label: '💰 Pricing', href: '/pricing' },
-            { label: '⚙️ Settings', href: '#' },
           ].map(item => (
             <Link key={item.label} href={item.href}
               className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
@@ -291,10 +303,35 @@ export default function DashboardPage() {
                 </select>
               </div>
             </div>
+            {/* Auth type */}
+            <div className="grid md:grid-cols-2 gap-4 mt-4">
+              <div>
+                <label className="text-sm text-gray-600 mb-1 block">Auth Type</label>
+                <select
+                  value={newAuthType}
+                  onChange={e => setNewAuthType(e.target.value as 'api_key' | 'jwt')}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+                  <option value="api_key">API Key only (default)</option>
+                  <option value="jwt">API Key + JWT (HS256)</option>
+                </select>
+              </div>
+              {newAuthType === 'jwt' && (
+                <div>
+                  <label className="text-sm text-gray-600 mb-1 block">JWT Secret (HS256)</label>
+                  <input
+                    value={newJwtSecret}
+                    onChange={e => setNewJwtSecret(e.target.value)}
+                    placeholder="Your shared signing secret"
+                    type="password"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              )}
+            </div>
             <div className="flex gap-3 mt-4">
               <button
                 onClick={createKey}
-                disabled={!newName.trim() || !newBackendId}
+                disabled={!newName.trim() || !newBackendId || (newAuthType === 'jwt' && !newJwtSecret.trim())}
                 className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">
                 Generate Key
               </button>
@@ -332,7 +369,7 @@ export default function DashboardPage() {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  {['Name', 'API Key', 'Backend', 'Status', 'Rate Limit', 'Calls Today', 'Actions'].map(h => (
+                  {['Name', 'API Key', 'Auth', 'Backend', 'Status', 'Rate Limit', 'Calls Today', 'Actions'].map(h => (
                     <th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">{h}</th>
                   ))}
                 </tr>
@@ -344,6 +381,13 @@ export default function DashboardPage() {
                     <tr key={k.id} className="hover:bg-gray-50">
                       <td className="px-4 py-4 text-sm font-medium text-gray-900">{k.name}</td>
                       <td className="px-4 py-4 text-sm font-mono text-gray-600">{maskKey(k.key)}</td>
+                      <td className="px-4 py-4">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                          k.authType === 'jwt' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'
+                        }`}>
+                          {k.authType === 'jwt' ? '🔐 JWT' : '🔑 Key'}
+                        </span>
+                      </td>
                       <td className="px-4 py-4 text-sm text-gray-500">
                         {backend ? (
                           <span title={backend.url} className="truncate max-w-[120px] block">{backend.name}</span>

@@ -1,6 +1,17 @@
 import { randomBytes } from 'crypto'
 import { redis } from './redis'
 
+export type KeyPolicy = {
+  /** Exact IPs or simple CIDR prefixes (/8 /16 /24 /32). Empty = allow all. */
+  ipAllowlist?: string[]
+  /** Reject bodies larger than this many bytes. */
+  maxRequestSizeBytes?: number
+  /** Headers injected into every upstream request. */
+  injectHeaders?: Record<string, string>
+  /** Request headers NOT forwarded upstream (case-insensitive match). */
+  stripHeaders?: string[]
+}
+
 export type ApiKey = {
   id: string
   name: string
@@ -10,6 +21,12 @@ export type ApiKey = {
   backendId: string
   createdAt: string
   description?: string
+  /** 'api_key' (default) — pass sk_live_xxx. 'jwt' — also require a signed HS256 Bearer token. */
+  authType?: 'api_key' | 'jwt'
+  /** HS256 shared secret for JWT validation. Required when authType='jwt'. */
+  jwtSecret?: string
+  /** Optional policy enforcement rules applied before each upstream request. */
+  policies?: KeyPolicy
 }
 
 function generateId(): string {
@@ -24,7 +41,10 @@ export async function createKey(
   name: string,
   rateLimit: number,
   backendId: string,
-  description?: string
+  description?: string,
+  authType: 'api_key' | 'jwt' = 'api_key',
+  jwtSecret?: string,
+  policies?: KeyPolicy
 ): Promise<ApiKey> {
   const id = generateId()
   const key = generateApiKey()
@@ -35,6 +55,9 @@ export async function createKey(
     backendId,
     createdAt: new Date().toISOString(),
     description,
+    authType,
+    ...(jwtSecret ? { jwtSecret } : {}),
+    ...(policies ? { policies } : {}),
   }
   await redis.set(`key:${id}`, JSON.stringify(apiKey))
   await redis.set(`keylookup:${key}`, id)
