@@ -86,9 +86,11 @@ export default function DashboardPage() {
           {[
             { label: '📊 Dashboard', href: '/dashboard', active: true },
             { label: '🔑 API Keys', href: '/dashboard', active: false },
+            { label: '🔀 Backends', href: '/dashboard', active: false },
             { label: '📈 Analytics', href: '/analytics', active: false },
+            { label: '📖 Docs', href: '/docs', active: false },
+            { label: '💰 Pricing', href: '/pricing', active: false },
             { label: '⚙️ Settings', href: '#', active: false },
-            { label: '📖 Docs', href: '#', active: false },
           ].map(item => (
             <Link key={item.label} href={item.href} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${item.active ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}>
               {item.label}
@@ -98,8 +100,11 @@ export default function DashboardPage() {
         <div className="p-4 border-t border-gray-200">
           <div className="bg-indigo-50 rounded-lg p-3 text-xs text-indigo-700">
             <div className="font-medium mb-1">Free Plan</div>
-            <div className="text-indigo-500">47,382 / 10,000 calls used</div>
-            <Link href="/pricing" className="text-indigo-600 font-medium hover:underline">Upgrade →</Link>
+            <div className="text-indigo-500">47,382 / 50,000 calls used</div>
+            <div className="w-full bg-indigo-200 rounded-full h-1 my-1">
+              <div className="bg-indigo-600 h-1 rounded-full" style={{ width: '94%' }}></div>
+            </div>
+            <Link href="/pricing" className="text-indigo-600 font-medium hover:underline">Upgrade to Growth ($19/mo) →</Link>
           </div>
         </div>
       </aside>

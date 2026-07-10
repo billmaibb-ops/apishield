@@ -10,7 +10,7 @@ const plans = [
     description: 'Perfect for side projects and early-stage prototypes.',
     cta: 'Get Started Free',
     features: [
-      { label: 'API calls', value: '10,000 / month' },
+      { label: 'API calls', value: '50,000 / month' },
       { label: 'API keys', value: '5 keys' },
       { label: 'Rate limiting', value: 'Basic (per-minute)' },
       { label: 'Analytics history', value: '7 days' },
@@ -24,10 +24,10 @@ const plans = [
   },
   {
     name: 'Growth',
-    price: '$49',
+    price: '$19',
     period: '/month',
     highlight: true,
-    badge: 'Most Popular',
+    badge: 'Cheapest in Market',
     description: 'For startups and growing teams shipping production APIs.',
     cta: 'Start Free Trial',
     features: [
@@ -188,7 +188,7 @@ export default function PricingPage() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {[
-                  ['Monthly API calls', '10,000', '1,000,000', 'Unlimited'],
+                  ['Monthly API calls', '50,000', '1,000,000', 'Unlimited'],
                   ['API keys', '5', 'Unlimited', 'Unlimited'],
                   ['Rate limiting granularity', 'Per-minute', 'Per-second, per-day', 'Fully custom'],
                   ['Analytics retention', '7 days', '90 days', 'Unlimited'],
