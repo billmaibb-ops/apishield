@@ -4,7 +4,7 @@
  * Currently supports HS256 (HMAC-SHA256 shared secret).
  */
 
-function b64urlDecode(s: string): Uint8Array {
+function b64urlDecode(s: string) {
   // Base64url → Base64 → binary
   const b64 = s.replace(/-/g, '+').replace(/_/g, '/')
   const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4)
