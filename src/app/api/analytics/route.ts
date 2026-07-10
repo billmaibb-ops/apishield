@@ -78,13 +78,13 @@ export async function GET() {
     // Aggregate latency across all keys for today
     const allLatTotals = await Promise.all(keys.map(k => redis.get(`lat_total:${k.id}:${today}`)))
     const allLatCounts = await Promise.all(keys.map(k => redis.get(`lat_count:${k.id}:${today}`)))
-    const sumLatency   = allLatTotals.reduce((s, v) => s + (v ? Number(v) : 0), 0)
-    const sumCount     = allLatCounts.reduce((s, v) => s + (v ? Number(v) : 0), 0)
+    const sumLatency   = allLatTotals.reduce<number>((s, v) => s + (v ? Number(v) : 0), 0)
+    const sumCount     = allLatCounts.reduce<number>((s, v) => s + (v ? Number(v) : 0), 0)
     const avgLatencyMs = sumCount > 0 ? Math.round(sumLatency / sumCount) : null
 
     // Total errors today
     const allErrors  = await Promise.all(keys.map(k => redis.get(`errors:${k.id}:${today}`)))
-    const totalErrors = allErrors.reduce((s, v) => s + (v ? Number(v) : 0), 0)
+    const totalErrors = allErrors.reduce<number>((s, v) => s + (v ? Number(v) : 0), 0)
 
     // Total tokens today
     const totalTokensRaw = await redis.get(`tokens:total:${today}`)
