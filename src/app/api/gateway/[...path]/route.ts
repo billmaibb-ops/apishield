@@ -292,7 +292,7 @@ async function handle(
   if (keyData.policies) {
     const { inject, strip } = buildHeaderPolicy(keyData.policies)
     Object.assign(forwardHeaders, inject)
-    for (const h of strip) delete forwardHeaders[h]
+    strip.forEach(h => { delete forwardHeaders[h] })
 
     // Also apply strip to pass-through headers
     const passThrough = ['content-type', 'accept', 'accept-encoding', 'accept-language']
