@@ -1,265 +1,287 @@
+'use client'
+import { useState } from 'react'
 import Link from 'next/link'
 
-const plans = [
+const PLANS = [
   {
-    name: 'Starter',
-    price: '$0',
-    period: '/month',
+    name: 'Free',
+    monthlyPrice: 0,
+    annualPrice: 0,
+    description: 'Everything you need to get started.',
+    cta: 'Start for free',
+    ctaHref: '/dashboard',
     highlight: false,
-    badge: null,
-    description: 'Perfect for side projects and early-stage prototypes.',
-    cta: 'Get Started Free',
     features: [
-      { label: 'API calls', value: '50,000 / month' },
-      { label: 'API keys', value: '5 keys' },
-      { label: 'Rate limiting', value: 'Basic (per-minute)' },
-      { label: 'Analytics history', value: '7 days' },
-      { label: 'IP whitelisting', value: false },
-      { label: 'Webhook alerts', value: false },
-      { label: 'Custom domains', value: false },
-      { label: 'SSO / SAML', value: false },
-      { label: 'SLA', value: false },
-      { label: 'Support', value: 'Community' },
+      '1M requests / month',
+      '3 API keys',
+      '3 backends',
+      '7-day analytics',
+      'Rate limiting (per-minute)',
+      'IP allowlist policies',
+      'LLM token tracking',
+      'Community support',
     ],
+    missing: ['Request log viewer', 'Usage email alerts', 'Key rotation', 'Priority support'],
   },
   {
-    name: 'Growth',
-    price: '$19',
-    period: '/month',
+    name: 'Pro',
+    monthlyPrice: 19,
+    annualPrice: 15,
+    description: 'For teams shipping real products.',
+    cta: 'Start Pro free for 14 days',
+    ctaHref: '/dashboard',
     highlight: true,
-    badge: 'Cheapest in Market',
-    description: 'For startups and growing teams shipping production APIs.',
-    cta: 'Start Free Trial',
     features: [
-      { label: 'API calls', value: '1,000,000 / month' },
-      { label: 'API keys', value: 'Unlimited' },
-      { label: 'Rate limiting', value: 'Advanced (per-second, per-day)' },
-      { label: 'Analytics history', value: '90 days' },
-      { label: 'IP whitelisting', value: true },
-      { label: 'Webhook alerts', value: true },
-      { label: 'Custom domains', value: true },
-      { label: 'SSO / SAML', value: false },
-      { label: 'SLA', value: '99.9% uptime' },
-      { label: 'Support', value: 'Priority email' },
+      '10M requests / month',
+      'Unlimited API keys',
+      'Unlimited backends',
+      '30-day analytics',
+      'Rate limiting (per-minute)',
+      'IP allowlist policies',
+      'LLM token tracking',
+      'Request log viewer (last 200 per key)',
+      'Usage email alerts (milestones + spikes)',
+      'One-click key rotation',
+      'JWT / HS256 auth',
+      'GraphQL + WebSocket passthrough',
+      'Priority email support',
     ],
+    missing: [],
   },
   {
-    name: 'Enterprise',
-    price: 'Custom',
-    period: '',
+    name: 'Scale',
+    monthlyPrice: 49,
+    annualPrice: 39,
+    description: 'High-volume APIs, zero surprises.',
+    cta: 'Contact us',
+    ctaHref: 'mailto:hello@apishield.io',
     highlight: false,
-    badge: null,
-    description: 'For companies that need unlimited scale, compliance, and dedicated support.',
-    cta: 'Contact Sales',
     features: [
-      { label: 'API calls', value: 'Unlimited' },
-      { label: 'API keys', value: 'Unlimited' },
-      { label: 'Rate limiting', value: 'Fully custom' },
-      { label: 'Analytics history', value: 'Unlimited' },
-      { label: 'IP whitelisting', value: true },
-      { label: 'Webhook alerts', value: true },
-      { label: 'Custom domains', value: true },
-      { label: 'SSO / SAML', value: true },
-      { label: 'SLA', value: '99.99% + custom' },
-      { label: 'Support', value: 'Dedicated engineer' },
+      '100M requests / month',
+      'Everything in Pro',
+      'Custom domains (coming soon)',
+      'SLA — 99.9% uptime guarantee',
+      'Slack connect support',
+      'Dedicated onboarding call',
+      'Invoice billing',
     ],
+    missing: [],
   },
 ]
 
-const faqs = [
+const FAQ = [
   {
-    q: 'What counts as an API call?',
-    a: 'Every request that passes through the APIShield proxy counts as one call — regardless of whether it succeeds or fails. Calls blocked by rate limiting do not count against your quota.',
+    q: 'What counts as a request?',
+    a: 'Any HTTP request proxied through your APIShield gateway URL. Requests that fail authentication before reaching your backend are not counted.',
   },
   {
-    q: 'Can I upgrade or downgrade at any time?',
-    a: 'Yes. You can upgrade instantly and the change takes effect immediately. Downgrades take effect at the end of your current billing cycle.',
+    q: 'What happens when I exceed my monthly limit?',
+    a: 'On the Free plan requests are rate-limited at the per-minute level; you won\'t be charged overages. On Pro and Scale we send you an alert and continue serving traffic — your card is never charged automatically for overages.',
   },
   {
-    q: 'What happens when I exceed my monthly call limit?',
-    a: 'On Starter, calls above the limit will be blocked with a 429 response. On Growth and Enterprise, we\'ll notify you and work with you to increase your quota — we won\'t cut you off mid-month.',
+    q: 'How does the 14-day Pro trial work?',
+    a: 'No credit card required. Start immediately, get full Pro features for 14 days, then choose to stay on Free or enter payment details to continue Pro.',
   },
   {
-    q: 'Is there a free trial for paid plans?',
-    a: 'Yes — the Growth plan comes with a 14-day free trial, no credit card required. You\'ll only be charged if you keep the plan after the trial.',
+    q: 'How does APIShield compare to Kong or Zuplo?',
+    a: 'Kong\'s cheapest paid tier starts at ~$105/month. Zuplo charges $25/month plus per-request overages. APIShield Pro is $19/month with no overage charges. See our detailed comparisons.',
   },
   {
-    q: 'Do you offer discounts for annual billing?',
-    a: 'Yes. Annual billing saves you 20% compared to monthly. Contact us to set up an annual plan.',
+    q: 'Can I self-host APIShield?',
+    a: 'Not currently — APIShield runs on Vercel Edge Runtime globally. Self-hosting is on the roadmap for Scale enterprise customers.',
   },
   {
-    q: 'What is APIShield built on?',
-    a: 'APIShield is built on api-umbrella, the open-source API management platform originally developed for the US federal government\'s api.data.gov initiative. It\'s battle-tested at scale.',
+    q: 'Is there a free tier permanently?',
+    a: 'Yes. The Free plan is not a time-limited trial. 1M requests/month, 3 keys, forever.',
   },
 ]
 
 export default function PricingPage() {
+  const [annual, setAnnual] = useState(false)
+
   return (
     <div className="min-h-screen bg-white">
       {/* Nav */}
-      <nav className="fixed top-0 w-full bg-white/95 backdrop-blur z-50 border-b border-gray-200 shadow-sm">
-        <div className="max-w-7xl mx-auto px-6 flex items-center justify-between h-16">
+      <nav className="fixed top-0 w-full bg-white/95 backdrop-blur z-50 border-b border-gray-200">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link href="/" className="text-gray-900 font-bold text-xl">🛡️ APIShield</Link>
-          <div className="hidden md:flex items-center gap-8 text-sm text-gray-600">
-            <Link href="/dashboard" className="hover:text-gray-900">Dashboard</Link>
+          <div className="flex items-center gap-6 text-sm text-gray-600">
+            <Link href="/features" className="hover:text-gray-900">Features</Link>
+            <Link href="/docs" className="hover:text-gray-900">Docs</Link>
             <Link href="/pricing" className="text-indigo-600 font-medium">Pricing</Link>
-            <Link href="/#features" className="hover:text-gray-900">Features</Link>
-          </div>
-          <div className="flex items-center gap-3">
-            <Link href="/dashboard" className="text-sm text-gray-600 hover:text-gray-900">Sign in</Link>
-            <Link href="/dashboard" className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
-              Get Started Free
+            <Link href="/dashboard" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition-colors">
+              Dashboard →
             </Link>
           </div>
         </div>
       </nav>
 
-      {/* Hero */}
-      <section className="pt-32 pb-16 px-6 bg-gradient-to-b from-gray-50 to-white">
-        <div className="max-w-3xl mx-auto text-center">
-          <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
-            Simple, transparent pricing
+      <div className="pt-28 pb-24 px-6">
+        {/* Header */}
+        <div className="text-center max-w-2xl mx-auto mb-12">
+          <h1 className="text-4xl font-bold text-gray-900 mb-4">
+            Simple pricing. No surprise bills.
           </h1>
-          <p className="text-xl text-gray-600 mb-2">
-            Start free. Scale as you grow. No surprise bills.
+          <p className="text-lg text-gray-600 mb-8">
+            Start free. Upgrade when you need more. Cancel anytime.
           </p>
-          <p className="text-sm text-gray-400">Annual billing saves 20% — <a href="#" className="underline hover:text-gray-600">contact us</a></p>
-        </div>
-      </section>
 
-      {/* Pricing cards */}
-      <section className="py-12 px-6">
-        <div className="max-w-6xl mx-auto grid md:grid-cols-3 gap-8 items-start">
-          {plans.map(p => (
-            <div key={p.name} className={`rounded-2xl border p-8 relative ${p.highlight ? 'bg-indigo-600 border-indigo-500 shadow-2xl shadow-indigo-200 scale-105' : 'bg-white border-gray-200'}`}>
-              {p.badge && (
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                  <span className="bg-amber-400 text-amber-900 text-xs font-bold px-3 py-1 rounded-full">{p.badge}</span>
-                </div>
-              )}
-              <div className={`text-sm font-medium mb-1 ${p.highlight ? 'text-indigo-200' : 'text-gray-500'}`}>{p.name}</div>
-              <div className={`text-4xl font-bold mb-1 ${p.highlight ? 'text-white' : 'text-gray-900'}`}>
-                {p.price}
-                {p.period && <span className={`text-base font-normal ${p.highlight ? 'text-indigo-300' : 'text-gray-400'}`}>{p.period}</span>}
-              </div>
-              <p className={`text-sm mt-2 mb-6 ${p.highlight ? 'text-indigo-200' : 'text-gray-500'}`}>{p.description}</p>
-
-              <Link
-                href={p.name === 'Enterprise' ? 'mailto:sales@apishield.io' : '/dashboard'}
-                className={`block text-center py-3 rounded-xl font-semibold text-sm transition-colors mb-6 ${p.highlight ? 'bg-white text-indigo-600 hover:bg-indigo-50' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
-              >
-                {p.cta}
-              </Link>
-
-              <div className={`h-px mb-6 ${p.highlight ? 'bg-indigo-500' : 'bg-gray-100'}`} />
-
-              <ul className="space-y-3">
-                {p.features.map(f => (
-                  <li key={f.label} className="flex items-start justify-between gap-4 text-sm">
-                    <span className={p.highlight ? 'text-indigo-200' : 'text-gray-500'}>{f.label}</span>
-                    {f.value === true ? (
-                      <span className="text-green-400 font-bold">✓</span>
-                    ) : f.value === false ? (
-                      <span className={p.highlight ? 'text-indigo-400' : 'text-gray-300'}>—</span>
-                    ) : (
-                      <span className={`font-medium text-right ${p.highlight ? 'text-white' : 'text-gray-900'}`}>{f.value}</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Feature comparison table */}
-      <section className="py-20 px-6 bg-gray-50">
-        <div className="max-w-5xl mx-auto">
-          <h2 className="text-2xl font-bold text-gray-900 text-center mb-12">Full feature comparison</h2>
-          <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-200">
-                  <th className="text-left px-6 py-4 text-sm font-semibold text-gray-900 w-1/2">Feature</th>
-                  <th className="text-center px-4 py-4 text-sm font-semibold text-gray-600">Starter</th>
-                  <th className="text-center px-4 py-4 text-sm font-semibold text-indigo-600">Growth</th>
-                  <th className="text-center px-4 py-4 text-sm font-semibold text-gray-600">Enterprise</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {[
-                  ['Monthly API calls', '50,000', '1,000,000', 'Unlimited'],
-                  ['API keys', '5', 'Unlimited', 'Unlimited'],
-                  ['Rate limiting granularity', 'Per-minute', 'Per-second, per-day', 'Fully custom'],
-                  ['Analytics retention', '7 days', '90 days', 'Unlimited'],
-                  ['Request logs', '7 days', '90 days', 'Unlimited'],
-                  ['IP whitelisting / blacklisting', '—', '✓', '✓'],
-                  ['Webhook alerts', '—', '✓', '✓'],
-                  ['Custom proxy domains', '—', '✓', '✓'],
-                  ['Developer self-service portal', '—', '✓', '✓'],
-                  ['Auto-generated API docs', '—', '✓', '✓'],
-                  ['SSO / SAML', '—', '—', '✓'],
-                  ['Audit logs', '—', '—', '✓'],
-                  ['On-premise deployment', '—', '—', '✓'],
-                  ['SLA guarantee', '—', '99.9%', '99.99% custom'],
-                  ['Support', 'Community', 'Priority email', 'Dedicated engineer'],
-                ].map(([feature, starter, growth, enterprise], i) => (
-                  <tr key={i} className="hover:bg-gray-50">
-                    <td className="px-6 py-3 text-sm text-gray-700">{feature}</td>
-                    <td className="px-4 py-3 text-sm text-center text-gray-500">{starter}</td>
-                    <td className="px-4 py-3 text-sm text-center text-indigo-700 font-medium">{growth}</td>
-                    <td className="px-4 py-3 text-sm text-center text-gray-700">{enterprise}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {/* Annual toggle */}
+          <div className="inline-flex items-center gap-3 bg-gray-100 rounded-full px-2 py-1">
+            <button
+              onClick={() => setAnnual(false)}
+              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                !annual ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
+              }`}
+            >
+              Monthly
+            </button>
+            <button
+              onClick={() => setAnnual(true)}
+              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                annual ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
+              }`}
+            >
+              Annual
+              <span className="ml-1.5 text-xs text-green-600 font-semibold">save 20%</span>
+            </button>
           </div>
         </div>
-      </section>
 
-      {/* FAQ */}
-      <section className="py-20 px-6 bg-white">
-        <div className="max-w-3xl mx-auto">
-          <h2 className="text-2xl font-bold text-gray-900 text-center mb-12">Frequently asked questions</h2>
+        {/* Plan cards */}
+        <div className="max-w-5xl mx-auto grid md:grid-cols-3 gap-6 mb-20">
+          {PLANS.map((plan) => {
+            const price = annual ? plan.annualPrice : plan.monthlyPrice
+            return (
+              <div
+                key={plan.name}
+                className={`rounded-2xl border p-8 flex flex-col ${
+                  plan.highlight
+                    ? 'border-indigo-500 shadow-lg shadow-indigo-100 ring-2 ring-indigo-500'
+                    : 'border-gray-200'
+                }`}
+              >
+                {plan.highlight && (
+                  <div className="text-xs font-bold text-indigo-600 uppercase tracking-widest mb-3">
+                    Most popular
+                  </div>
+                )}
+                <div className="mb-6">
+                  <h2 className="text-xl font-bold text-gray-900 mb-1">{plan.name}</h2>
+                  <p className="text-sm text-gray-500 mb-4">{plan.description}</p>
+                  <div className="flex items-end gap-1">
+                    <span className="text-4xl font-bold text-gray-900">${price}</span>
+                    <span className="text-gray-500 mb-1">/mo</span>
+                  </div>
+                  {annual && price > 0 && (
+                    <p className="text-xs text-gray-400 mt-1">billed ${price * 12}/year</p>
+                  )}
+                </div>
+
+                <Link
+                  href={plan.ctaHref}
+                  className={`w-full text-center py-2.5 px-4 rounded-xl font-medium text-sm transition-colors mb-8 ${
+                    plan.highlight
+                      ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                      : 'border border-gray-300 hover:border-gray-400 text-gray-700'
+                  }`}
+                >
+                  {plan.cta}
+                </Link>
+
+                <ul className="space-y-2.5 flex-1">
+                  {plan.features.map((f) => (
+                    <li key={f} className="flex gap-2 text-sm text-gray-700">
+                      <span className="text-green-500 mt-0.5 shrink-0">✓</span>
+                      {f}
+                    </li>
+                  ))}
+                  {plan.missing.map((f) => (
+                    <li key={f} className="flex gap-2 text-sm text-gray-400">
+                      <span className="mt-0.5 shrink-0">✗</span>
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )
+          })}
+        </div>
+
+        {/* vs competitors */}
+        <div className="max-w-3xl mx-auto mb-20 bg-gray-50 rounded-2xl p-8">
+          <h2 className="text-xl font-bold text-gray-900 mb-6 text-center">
+            How APIShield compares
+          </h2>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-200">
+                <th className="text-left py-2 font-semibold text-gray-700 w-1/3">Product</th>
+                <th className="text-left py-2 font-semibold text-gray-700">Cheapest paid plan</th>
+                <th className="text-left py-2 font-semibold text-gray-700">Requests included</th>
+                <th className="text-left py-2 font-semibold text-gray-700">Overages</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              <tr className="font-medium text-indigo-700 bg-indigo-50/50">
+                <td className="py-3">🛡️ APIShield</td>
+                <td className="py-3">$19/mo</td>
+                <td className="py-3">10M / mo</td>
+                <td className="py-3">None</td>
+              </tr>
+              <tr className="text-gray-600">
+                <td className="py-3">Zuplo</td>
+                <td className="py-3">$25/mo</td>
+                <td className="py-3">1M / mo</td>
+                <td className="py-3">$0.05 / 10k</td>
+              </tr>
+              <tr className="text-gray-600">
+                <td className="py-3">Kong Konnect</td>
+                <td className="py-3">~$105/mo</td>
+                <td className="py-3">1M / mo</td>
+                <td className="py-3">$200 / M</td>
+              </tr>
+              <tr className="text-gray-600">
+                <td className="py-3">Tyk Cloud</td>
+                <td className="py-3">Contact sales</td>
+                <td className="py-3">—</td>
+                <td className="py-3">—</td>
+              </tr>
+            </tbody>
+          </table>
+          <div className="mt-4 flex gap-4 text-xs text-gray-500">
+            <Link href="/vs-zuplo" className="text-indigo-600 hover:underline">APIShield vs Zuplo →</Link>
+            <Link href="/vs-kong" className="text-indigo-600 hover:underline">APIShield vs Kong →</Link>
+          </div>
+        </div>
+
+        {/* FAQ */}
+        <div className="max-w-2xl mx-auto mb-20">
+          <h2 className="text-2xl font-bold text-gray-900 mb-8 text-center">
+            Frequently asked questions
+          </h2>
           <div className="space-y-6">
-            {faqs.map((faq, i) => (
-              <div key={i} className="border border-gray-200 rounded-xl p-6">
-                <h3 className="font-semibold text-gray-900 mb-2">{faq.q}</h3>
-                <p className="text-gray-600 text-sm leading-relaxed">{faq.a}</p>
+            {FAQ.map((item) => (
+              <div key={item.q}>
+                <h3 className="font-semibold text-gray-900 mb-1">{item.q}</h3>
+                <p className="text-sm text-gray-600 leading-relaxed">{item.a}</p>
               </div>
             ))}
           </div>
         </div>
-      </section>
 
-      {/* CTA */}
-      <section className="py-20 px-6 bg-indigo-600">
+        {/* CTA */}
         <div className="max-w-2xl mx-auto text-center">
-          <h2 className="text-3xl font-bold text-white mb-4">Ready to protect your APIs?</h2>
-          <p className="text-indigo-200 mb-8">Join 500+ companies using APIShield. Start free, upgrade when you need to.</p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link href="/dashboard" className="bg-white text-indigo-600 font-semibold px-8 py-4 rounded-xl hover:bg-indigo-50 transition-colors">
-              Get Started Free
-            </Link>
-            <Link href="mailto:sales@apishield.io" className="border border-white/30 text-white font-semibold px-8 py-4 rounded-xl hover:bg-white/10 transition-colors">
-              Talk to Sales
-            </Link>
-          </div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">Ready to ship faster?</h2>
+          <p className="text-gray-600 mb-8">No credit card. Live in 5 minutes.</p>
+          <Link
+            href="/dashboard"
+            className="inline-block bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-8 py-4 rounded-xl transition-colors"
+          >
+            Start for free →
+          </Link>
         </div>
-      </section>
-
-      {/* Footer */}
-      <footer className="bg-gray-900 py-12 px-6">
-        <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="text-white font-bold text-lg">🛡️ APIShield</div>
-          <div className="text-gray-500 text-sm">Built on api-umbrella (US Federal open-source). © 2024 APIShield. All rights reserved.</div>
-          <div className="flex gap-6 text-sm text-gray-400">
-            <a href="#" className="hover:text-white">Docs</a>
-            <a href="#" className="hover:text-white">Privacy</a>
-            <a href="#" className="hover:text-white">Terms</a>
-          </div>
-        </div>
-      </footer>
+      </div>
     </div>
   )
 }

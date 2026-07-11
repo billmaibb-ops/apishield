@@ -135,6 +135,8 @@ export default function DashboardPage() {
   const [newJwtSecret, setNewJwtSecret] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [testResults, setTestResults] = useState<Record<string, { status: number; ms: number } | 'loading'>>({})
+  const [rotatingId, setRotatingId] = useState<string | null>(null)
+  const [rotatedKey, setRotatedKey] = useState<Record<string, string>>({}) // id → new key value
   const [toast, setToast] = useState<string | null>(null)
   const [origin, setOrigin] = useState('https://apishield.vercel.app')
 
@@ -221,6 +223,23 @@ export default function DashboardPage() {
     })
     await loadData()
     showToast(newStatus === 'active' ? 'Key activated' : 'Key revoked')
+  }
+
+  const rotateKey = async (k: ApiKey) => {
+    if (!confirm(`Rotate "${k.name}"? The current key will stop working immediately.`)) return
+    setRotatingId(k.id)
+    try {
+      const res = await fetch(`/api/keys/${k.id}/rotate`, { method: 'POST' })
+      const data = await res.json()
+      if (data.key) {
+        setKeys(prev => prev.map(x => x.id === k.id ? { ...x, key: data.key.key } : x))
+        setRotatedKey(prev => ({ ...prev, [k.id]: data.key.key }))
+        // Auto-clear the reveal after 30s
+        setTimeout(() => setRotatedKey(prev => { const n = {...prev}; delete n[k.id]; return n }), 30_000)
+      }
+    } finally {
+      setRotatingId(null)
+    }
   }
 
   const copyKey = (k: ApiKey) => {
@@ -497,7 +516,7 @@ export default function DashboardPage() {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  {['Name', 'API Key', 'Backend', 'Status', 'Rate Limit', 'Calls Today', 'Est. Cost', 'Test', 'Actions'].map(h => (
+                  {['Name', 'API Key', 'Backend', 'Status', 'Rate Limit', 'Calls Today', 'Est. Cost', 'Test', 'Logs', 'Actions'].map(h => (
                     <th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">{h}</th>
                   ))}
                 </tr>
@@ -551,9 +570,27 @@ export default function DashboardPage() {
                         ) : <span className="text-gray-300 text-xs">—</span>}
                       </td>
                       <td className="px-4 py-4">
+                        {rotatedKey[k.id] ? (
+                          <div className="flex items-center gap-1">
+                            <span className="font-mono text-xs text-green-700 bg-green-50 px-1.5 py-0.5 rounded max-w-[120px] truncate block" title={rotatedKey[k.id]}>
+                              {rotatedKey[k.id].slice(0, 20)}…
+                            </span>
+                            <button onClick={() => navigator.clipboard.writeText(rotatedKey[k.id])} className="text-xs text-green-600 hover:text-green-800">Copy</button>
+                          </div>
+                        ) : (
+                          <a href={`/dashboard/logs?keyId=${k.id}`} className="text-xs text-gray-500 hover:text-indigo-600 font-medium">Logs</a>
+                        )}
+                      </td>
+                      <td className="px-4 py-4">
                         <div className="flex items-center gap-2">
                           <button onClick={() => copyKey(k)} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium transition-colors">
                             {copiedId === k.id ? '✓' : 'Copy'}
+                          </button>
+                          <button
+                            onClick={() => rotateKey(k)}
+                            disabled={rotatingId === k.id}
+                            className="text-xs text-amber-600 hover:text-amber-800 font-medium disabled:opacity-40">
+                            {rotatingId === k.id ? '…' : 'Rotate'}
                           </button>
                           <button onClick={() => toggleStatus(k)}
                             className={`text-xs font-medium transition-colors ${

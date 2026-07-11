@@ -27,6 +27,8 @@ export type ApiKey = {
   jwtSecret?: string
   /** Optional policy enforcement rules applied before each upstream request. */
   policies?: KeyPolicy
+  /** Owner email — used for usage alerts */
+  ownerEmail?: string
 }
 
 function generateId(): string {
@@ -44,7 +46,8 @@ export async function createKey(
   description?: string,
   authType: 'api_key' | 'jwt' = 'api_key',
   jwtSecret?: string,
-  policies?: KeyPolicy
+  policies?: KeyPolicy,
+  ownerEmail?: string
 ): Promise<ApiKey> {
   const id = generateId()
   const key = generateApiKey()
@@ -58,6 +61,7 @@ export async function createKey(
     authType,
     ...(jwtSecret ? { jwtSecret } : {}),
     ...(policies ? { policies } : {}),
+    ...(ownerEmail ? { ownerEmail } : {}),
   }
   await redis.set(`key:${id}`, JSON.stringify(apiKey))
   await redis.set(`keylookup:${key}`, id)
@@ -111,4 +115,17 @@ export async function getTotalCallsToday(): Promise<number> {
   const today = new Date().toISOString().split('T')[0]
   const count = await redis.get(`calls:total:${today}`)
   return count ? Number(count) : 0
+}
+
+export async function rotateKey(id: string): Promise<ApiKey | null> {
+  const existing = await getKey(id)
+  if (!existing) return null
+  const newKeyValue = generateApiKey()
+  const updated: ApiKey = { ...existing, key: newKeyValue }
+  const p = redis.pipeline()
+  p.set(`key:${id}`, JSON.stringify(updated))
+  p.set(`keylookup:${newKeyValue}`, id)
+  p.del(`keylookup:${existing.key}`)
+  await p.exec()
+  return updated
 }

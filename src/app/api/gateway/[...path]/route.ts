@@ -83,16 +83,23 @@ async function enforceRateLimit(
   return { allowed: calls <= limit, calls, resetAt: (minute + 1) * 60000 }
 }
 
-/** Fire-and-forget: pipeline all tracking commands into one HTTP round trip. */
+/** Fire-and-forget: pipeline all tracking commands + request log into one HTTP round trip. */
 function trackAll(
   keyId: string,
   latencyMs: number,
   isError: boolean,
-  totalTokens: number
+  totalTokens: number,
+  method = 'GET',
+  reqPath = '/'
 ): void {
   const today = new Date().toISOString().split('T')[0]
   const ttl   = 86400 * 8
   const p = redis.pipeline()
+  // Request log (capped list, 200 entries, 7-day TTL)
+  const logEntry = JSON.stringify({ ts: Date.now(), status: isError ? 0 : 200, ms: latencyMs, method, path: reqPath })
+  p.lpush(`logs:${keyId}`, logEntry)
+  p.ltrim(`logs:${keyId}`, 0, 199)
+  p.expire(`logs:${keyId}`, 86400 * 7)
   // Call counters
   p.incr(`calls:${keyId}:${today}`)
   p.expire(`calls:${keyId}:${today}`, ttl)
@@ -339,7 +346,7 @@ async function handle(
   try {
     upstream = await fetch(targetUrl, forwardInit)
   } catch (err) {
-    trackAll(keyData.id, Date.now() - startTime, true, 0)
+    trackAll(keyData.id, Date.now() - startTime, true, 0, req.method, params.path.join('/'))
     return NextResponse.json(
       {
         error: 'Backend unreachable',
@@ -376,7 +383,7 @@ async function handle(
   }
 
   // One pipeline call covers calls + latency + errors + tokens
-  trackAll(keyData.id, latencyMs, isError, totalTokens)
+  trackAll(keyData.id, latencyMs, isError, totalTokens, req.method, params.path.join('/'))
 
   // ── 13. Return upstream response ──────────────────────────────────────────
   const responseHeaders: Record<string, string> = {

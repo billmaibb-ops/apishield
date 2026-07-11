@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { listKeys, createKey } from '@/lib/keys'
 import { getDailyCallCount } from '@/lib/keys'
 import { isRedisConfigured } from '@/lib/redis'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
 
 // GET /api/keys — list all keys with today's call counts
 export async function GET() {
@@ -30,6 +32,9 @@ export async function POST(req: NextRequest) {
   }
   try {
     const body = await req.json()
+    const session = await getServerSession(authOptions)
+    const ownerEmail = session?.user?.email ?? undefined
+
     const {
       name,
       rateLimit = 1000,
@@ -57,7 +62,8 @@ export async function POST(req: NextRequest) {
       description,
       authType,
       jwtSecret?.trim() || undefined,
-      policies || undefined
+      policies || undefined,
+      ownerEmail
     )
     return NextResponse.json({ key }, { status: 201 })
   } catch (err) {
