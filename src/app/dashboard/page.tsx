@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
+import { useSession, signOut } from 'next-auth/react'
 import Link from 'next/link'
 
 type ApiKey = {
@@ -26,6 +27,7 @@ function maskKey(key: string): string {
 }
 
 export default function DashboardPage() {
+  const { data: session } = useSession()
   const [keys, setKeys] = useState<ApiKey[]>([])
   const [backends, setBackends] = useState<Backend[]>([])
   const [loading, setLoading] = useState(true)
@@ -193,7 +195,20 @@ export default function DashboardPage() {
             </Link>
           ))}
         </nav>
-        <div className="p-4 border-t border-gray-200">
+        <div className="p-4 border-t border-gray-200 space-y-3">
+          {/* User info */}
+          {session?.user && (
+            <div className="flex items-center gap-2 px-1">
+              {session.user.image && (
+                <img src={session.user.image} alt="" className="w-7 h-7 rounded-full" />
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-medium text-gray-900 truncate">{session.user.name}</div>
+                <div className="text-xs text-gray-400 truncate">{session.user.email}</div>
+              </div>
+              <button onClick={() => signOut({ callbackUrl: '/login' })} className="text-gray-400 hover:text-gray-600 text-xs flex-shrink-0" title="Sign out">⏻</button>
+            </div>
+          )}
           <div className={`rounded-lg p-3 text-xs ${configured ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
             <div className="font-medium mb-1">{configured ? '● Gateway Active' : '○ Gateway Offline'}</div>
             {configured ? (
