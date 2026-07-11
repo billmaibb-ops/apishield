@@ -75,38 +75,49 @@ async function enforceRateLimit(
 ): Promise<{ allowed: boolean; calls: number; resetAt: number }> {
   const minute = Math.floor(Date.now() / 60000)
   const rlKey  = `rl:${keyId}:${minute}`
-  const calls  = await redis.incr(rlKey)
-  if (calls === 1) await redis.expire(rlKey, 120)
+  // Pipeline INCR + EXPIRE in one round trip (was 1-2 RTTs)
+  const p = redis.pipeline()
+  p.incr(rlKey)
+  p.expire(rlKey, 120)
+  const [calls] = await p.exec() as [number, number]
   return { allowed: calls <= limit, calls, resetAt: (minute + 1) * 60000 }
 }
 
-async function trackCall(keyId: string, latencyMs: number, isError: boolean): Promise<void> {
+/** Fire-and-forget: pipeline all tracking commands into one HTTP round trip. */
+function trackAll(
+  keyId: string,
+  latencyMs: number,
+  isError: boolean,
+  totalTokens: number
+): void {
   const today = new Date().toISOString().split('T')[0]
-  const ops: Promise<unknown>[] = [
-    redis.incr(`calls:${keyId}:${today}`),
-    redis.expire(`calls:${keyId}:${today}`, 86400 * 8),
-    redis.incr(`calls:total:${today}`),
-    redis.expire(`calls:total:${today}`, 86400 * 8),
-    redis.incrby(`lat_total:${keyId}:${today}`, latencyMs),
-    redis.expire(`lat_total:${keyId}:${today}`, 86400 * 8),
-    redis.incr(`lat_count:${keyId}:${today}`),
-    redis.expire(`lat_count:${keyId}:${today}`, 86400 * 8),
-  ]
+  const ttl   = 86400 * 8
+  const p = redis.pipeline()
+  // Call counters
+  p.incr(`calls:${keyId}:${today}`)
+  p.expire(`calls:${keyId}:${today}`, ttl)
+  p.incr(`calls:total:${today}`)
+  p.expire(`calls:total:${today}`, ttl)
+  // Latency accumulators
+  p.incrby(`lat_total:${keyId}:${today}`, latencyMs)
+  p.expire(`lat_total:${keyId}:${today}`, ttl)
+  p.incr(`lat_count:${keyId}:${today}`)
+  p.expire(`lat_count:${keyId}:${today}`, ttl)
+  // Error counters (only when needed)
   if (isError) {
-    ops.push(redis.incr(`errors:${keyId}:${today}`))
-    ops.push(redis.expire(`errors:${keyId}:${today}`, 86400 * 8))
+    p.incr(`errors:${keyId}:${today}`)
+    p.expire(`errors:${keyId}:${today}`, ttl)
+    p.incr(`errors:total:${today}`)
+    p.expire(`errors:total:${today}`, ttl)
   }
-  Promise.all(ops).catch(() => { /* non-critical */ })
-}
-
-async function trackTokens(keyId: string, totalTokens: number): Promise<void> {
-  const today = new Date().toISOString().split('T')[0]
-  Promise.all([
-    redis.incrby(`tokens:${keyId}:${today}`, totalTokens),
-    redis.expire(`tokens:${keyId}:${today}`, 86400 * 8),
-    redis.incrby(`tokens:total:${today}`, totalTokens),
-    redis.expire(`tokens:total:${today}`, 86400 * 8),
-  ]).catch(() => {})
+  // Token counters (LLM traffic)
+  if (totalTokens > 0) {
+    p.incrby(`tokens:${keyId}:${today}`, totalTokens)
+    p.expire(`tokens:${keyId}:${today}`, ttl)
+    p.incrby(`tokens:total:${today}`, totalTokens)
+    p.expire(`tokens:total:${today}`, ttl)
+  }
+  p.exec().catch(() => { /* non-critical — never block the response */ })
 }
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
@@ -236,8 +247,11 @@ async function handle(
     }
   }
 
-  // ── 6. Rate limiting ──────────────────────────────────────────────────────
-  const { allowed, calls, resetAt } = await enforceRateLimit(keyData.id, keyData.rateLimit)
+  // ── 6+7. Rate limiting + backend lookup — parallel (independent) ──────────
+  const [{ allowed, calls, resetAt }, backend] = await Promise.all([
+    enforceRateLimit(keyData.id, keyData.rateLimit),
+    resolveBackend(keyData.backendId),
+  ])
   const remaining = Math.max(0, keyData.rateLimit - calls)
 
   const rateLimitHeaders = {
@@ -264,8 +278,7 @@ async function handle(
     )
   }
 
-  // ── 7. Resolve backend ────────────────────────────────────────────────────
-  const backend = await resolveBackend(keyData.backendId)
+  // backend resolved in parallel above
   if (!backend?.active) {
     return NextResponse.json(
       { error: 'Backend not found or inactive' },
@@ -326,7 +339,7 @@ async function handle(
   try {
     upstream = await fetch(targetUrl, forwardInit)
   } catch (err) {
-    trackCall(keyData.id, Date.now() - startTime, true)
+    trackAll(keyData.id, Date.now() - startTime, true, 0)
     return NextResponse.json(
       {
         error: 'Backend unreachable',
@@ -342,12 +355,11 @@ async function handle(
   const isError   = upstream.status >= 400
 
   // ── 11. Track usage (non-blocking) ───────────────────────────────────────
-  trackCall(keyData.id, latencyMs, isError)
 
-  // ── 12. LLM token tracking ────────────────────────────────────────────────
-  // We read the body into a buffer once and then check it for token counts.
+  // ── 12. Read body + parse LLM tokens, then fire one pipeline trackAll ──────
   const body = await upstream.arrayBuffer()
 
+  let totalTokens = 0
   if (
     backend.type === 'llm' &&
     upstream.headers.get('content-type')?.includes('application/json') &&
@@ -357,13 +369,14 @@ async function handle(
       const json = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>
       const usage = json?.usage as Record<string, number> | undefined
       if (usage) {
-        // OpenAI: usage.total_tokens | Anthropic: usage.input_tokens + usage.output_tokens
-        const total = usage.total_tokens
+        totalTokens = usage.total_tokens
           ?? ((usage.input_tokens ?? 0) + (usage.output_tokens ?? 0))
-        if (total > 0) trackTokens(keyData.id, total)
       }
     } catch { /* non-critical */ }
   }
+
+  // One pipeline call covers calls + latency + errors + tokens
+  trackAll(keyData.id, latencyMs, isError, totalTokens)
 
   // ── 13. Return upstream response ──────────────────────────────────────────
   const responseHeaders: Record<string, string> = {
