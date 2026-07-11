@@ -26,6 +26,99 @@ function maskKey(key: string): string {
   return key.slice(0, 14) + '••••' + key.slice(-4)
 }
 
+interface OnboardingProps {
+  hasBackend: boolean
+  hasKey: boolean
+  hasCalls: boolean
+  gatewayKey: string | null
+  origin: string
+  onCreateKey: () => void
+}
+
+function OnboardingChecklist({ hasBackend, hasKey, hasCalls, gatewayKey, origin, onCreateKey }: OnboardingProps) {
+  const [copied, setCopied] = useState(false)
+  const allDone = hasBackend && hasKey && hasCalls
+
+  if (allDone) return null
+
+  const curlCmd = gatewayKey
+    ? `curl ${origin}/api/gateway/get \\\n  -H "Authorization: Bearer ${gatewayKey}"`
+    : null
+
+  const steps = [
+    {
+      n: 1,
+      done: hasBackend,
+      title: 'Add a backend',
+      desc: 'Tell APIShield where to proxy your traffic — any REST API or LLM endpoint.',
+      action: <Link href="/backends" className="text-sm font-medium text-indigo-600 hover:text-indigo-800">Add backend →</Link>,
+    },
+    {
+      n: 2,
+      done: hasKey,
+      title: 'Create an API key',
+      desc: 'Generate a key to authenticate requests through the gateway.',
+      action: hasBackend
+        ? <button onClick={onCreateKey} className="text-sm font-medium text-indigo-600 hover:text-indigo-800">Create key →</button>
+        : <span className="text-sm text-gray-400">Add a backend first</span>,
+    },
+    {
+      n: 3,
+      done: hasCalls,
+      title: 'Send your first request',
+      desc: 'Route a real request through the gateway and watch analytics populate.',
+      action: curlCmd ? (
+        <div className="mt-2">
+          <div className="bg-gray-900 rounded-lg p-3 font-mono text-xs text-green-400 whitespace-pre">{curlCmd}</div>
+          <button
+            onClick={() => { navigator.clipboard.writeText(curlCmd.replace(/\\\n  /g, ' ')); setCopied(true); setTimeout(() => setCopied(false), 2000) }}
+            className="text-xs text-gray-500 hover:text-gray-700 mt-1">
+            {copied ? '✓ Copied' : 'Copy command'}
+          </button>
+        </div>
+      ) : <span className="text-sm text-gray-400">Complete steps 1 & 2 first</span>,
+    },
+  ]
+
+  const doneCount = [hasBackend, hasKey, hasCalls].filter(Boolean).length
+
+  return (
+    <div className="bg-white border border-indigo-200 rounded-xl p-6 mb-6">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="font-semibold text-gray-900">Getting started</h2>
+          <p className="text-xs text-gray-500 mt-0.5">{doneCount} of 3 steps complete</p>
+        </div>
+        <div className="flex gap-1">
+          {[1,2,3].map(i => (
+            <div key={i} className={`h-1.5 w-12 rounded-full ${i <= doneCount ? 'bg-indigo-500' : 'bg-gray-200'}`} />
+          ))}
+        </div>
+      </div>
+      <div className="space-y-4">
+        {steps.map((s) => (
+          <div key={s.n} className={`flex gap-3 p-3 rounded-lg ${s.done ? 'bg-green-50' : 'bg-gray-50'}`}>
+            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5 ${
+              s.done ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-500'
+            }`}>
+              {s.done ? '✓' : s.n}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className={`text-sm font-medium ${s.done ? 'text-green-700 line-through' : 'text-gray-900'}`}>{s.title}</div>
+              {!s.done && (
+                <>
+                  <div className="text-xs text-gray-500 mt-0.5">{s.desc}</div>
+                  <div className="mt-1.5">{s.action}</div>
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function DashboardPage() {
   const { data: session } = useSession()
   const [keys, setKeys] = useState<ApiKey[]>([])
@@ -41,6 +134,9 @@ export default function DashboardPage() {
   const [newJwtSecret, setNewJwtSecret] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [origin, setOrigin] = useState('https://apishield.vercel.app')
+
+  useEffect(() => { setOrigin(window.location.origin) }, [])
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -104,7 +200,7 @@ export default function DashboardPage() {
       setShowCreate(false)
       await loadData()
       showToast('API key created!')
-    } catch (err) {
+    } catch {
       showToast('Failed to create key')
     }
   }
@@ -136,6 +232,8 @@ export default function DashboardPage() {
 
   const activeCount = keys.filter(k => k.status === 'active').length
   const revokedCount = keys.filter(k => k.status === 'revoked').length
+  const firstActiveKey = keys.find(k => k.status === 'active')
+  const hasCalls = totalCallsToday > 0 || keys.some(k => k.callsToday > 0)
 
   // ─── Redis not configured: setup banner ─────────────────────────────────
   const SetupBanner = () => (
@@ -148,18 +246,10 @@ export default function DashboardPage() {
             APIShield uses Upstash Redis to store API keys and track rate limits. Set up a free instance in 2 minutes:
           </p>
           <ol className="text-sm text-amber-700 space-y-2 list-decimal list-inside mb-4">
-            <li>
-              Go to <a href="https://upstash.com" target="_blank" rel="noopener" className="underline font-medium">upstash.com</a> → Create a free Redis database (no CC required)
-            </li>
-            <li>
-              Click <strong>REST API</strong> tab → copy <code className="bg-amber-100 px-1 rounded text-xs">UPSTASH_REDIS_REST_URL</code> and <code className="bg-amber-100 px-1 rounded text-xs">UPSTASH_REDIS_REST_TOKEN</code>
-            </li>
-            <li>
-              In Vercel → your project → <strong>Settings → Environment Variables</strong> → paste both values
-            </li>
-            <li>
-              Redeploy: <code className="bg-amber-100 px-1 rounded text-xs">git commit --allow-empty -m "add redis env" && git push org master:main</code>
-            </li>
+            <li>Go to <a href="https://upstash.com" target="_blank" rel="noopener" className="underline font-medium">upstash.com</a> → Create a free Redis database (no CC required)</li>
+            <li>Click <strong>REST API</strong> tab → copy <code className="bg-amber-100 px-1 rounded text-xs">UPSTASH_REDIS_REST_URL</code> and <code className="bg-amber-100 px-1 rounded text-xs">UPSTASH_REDIS_REST_TOKEN</code></li>
+            <li>In Vercel → your project → <strong>Settings → Environment Variables</strong> → paste both values</li>
+            <li>Redeploy: <code className="bg-amber-100 px-1 rounded text-xs">git commit --allow-empty -m &quot;add redis env&quot; &amp;&amp; git push</code></li>
           </ol>
           <div className="text-xs text-amber-600 bg-amber-100 rounded-lg p-3 font-mono">
             <div>UPSTASH_REDIS_REST_URL=https://&lt;your-db&gt;.upstash.io</div>
@@ -196,7 +286,6 @@ export default function DashboardPage() {
           ))}
         </nav>
         <div className="p-4 border-t border-gray-200 space-y-3">
-          {/* User info */}
           {session?.user && (
             <div className="flex items-center gap-2 px-1">
               {session.user.image && (
@@ -247,11 +336,16 @@ export default function DashboardPage() {
         {/* Setup banner when Redis not configured */}
         {!configured && !loading && <SetupBanner />}
 
-        {/* No backends warning */}
-        {configured && !loading && backends.length === 0 && (
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6 text-sm text-blue-800">
-            <strong>Next step:</strong> <Link href="/backends" className="underline font-medium">Add a backend server</Link> — then you can create API keys that proxy to it.
-          </div>
+        {/* Onboarding checklist */}
+        {configured && !loading && (
+          <OnboardingChecklist
+            hasBackend={backends.length > 0}
+            hasKey={keys.length > 0}
+            hasCalls={hasCalls}
+            gatewayKey={firstActiveKey?.key ?? null}
+            origin={origin}
+            onCreateKey={() => setShowCreate(true)}
+          />
         )}
 
         {/* Stats */}
@@ -275,9 +369,9 @@ export default function DashboardPage() {
           <div className="bg-gray-900 rounded-xl p-4 mb-6 text-sm">
             <div className="text-gray-400 mb-1 text-xs uppercase tracking-wide">Your Gateway URL</div>
             <div className="text-green-400 font-mono">
-              {typeof window !== 'undefined' ? window.location.origin : 'https://apishield.vercel.app'}/api/gateway/<span className="text-gray-400">{'{path}'}</span>?api_key=<span className="text-yellow-400">sk_live_xxx</span>
+              {origin}/api/gateway/<span className="text-gray-400">{'{path}'}</span>
             </div>
-            <div className="text-gray-500 text-xs mt-1">Or use header: <span className="text-gray-300 font-mono">X-API-Key: sk_live_xxx</span></div>
+            <div className="text-gray-500 text-xs mt-1">Auth: <span className="text-gray-300 font-mono">Authorization: Bearer sk_live_xxx</span> or <span className="text-gray-300 font-mono">X-API-Key: sk_live_xxx</span></div>
           </div>
         )}
 
@@ -318,7 +412,6 @@ export default function DashboardPage() {
                 </select>
               </div>
             </div>
-            {/* Auth type */}
             <div className="grid md:grid-cols-2 gap-4 mt-4">
               <div>
                 <label className="text-sm text-gray-600 mb-1 block">Auth Type</label>
