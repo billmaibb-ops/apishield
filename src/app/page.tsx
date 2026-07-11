@@ -436,9 +436,9 @@ X-API-Key: sk_live_xxxxxxxxxxxxxxxx
             <div>
               <div className="text-gray-300 font-semibold text-sm mb-3">Compare</div>
               <div className="space-y-2 text-gray-500 text-sm">
-                <div><span>vs Kong</span></div>
+                <div><a href="/vs-kong" className="hover:text-white transition-colors">vs Kong</a></div>
                 <div><span>vs Apigee</span></div>
-                <div><span>vs Zuplo</span></div>
+                <div><a href="/vs-zuplo" className="hover:text-white transition-colors">vs Zuplo</a></div>
                 <div><a href="mailto:hello@apishield.io" className="hover:text-white transition-colors">hello@apishield.io</a></div>
               </div>
             </div>
