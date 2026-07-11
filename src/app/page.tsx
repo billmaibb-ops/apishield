@@ -55,7 +55,7 @@ const featureGroups = [
     category: 'Zero-ops infrastructure',
     icon: '🚀',
     features: [
-      { title: 'Vercel Edge Runtime', desc: "Built on Vercel Edge Runtime (Cloudflare-backed, 300+ PoPs worldwide) — sub-50ms cold starts, no servers to manage, no YAML to write." },
+      { title: 'Vercel Edge Runtime', desc: "Built on Fastly's global edge network (400+ PoPs worldwide) — sub-50ms cold starts, no servers to manage, no YAML to write." },
       { title: 'Upstash Redis backend', desc: 'All keys, backends, rate limit windows, and analytics counters live in Upstash Redis via HTTP. The free Upstash tier covers most startups entirely.' },
       { title: 'Deploy in 5 minutes', desc: 'Fork the repo, set two env vars (UPSTASH_REDIS_REST_URL and TOKEN), deploy to Vercel. Your gateway is live. No ops team required.' },
       { title: 'No YAML, no plugins', desc: 'Everything configured through the admin UI or the management API. No plugin marketplace, no config files, no version-locked YAML schemas.' },
@@ -66,7 +66,7 @@ const featureGroups = [
 const stats = [
   { value: '$0', label: 'Free to start, forever' },
   { value: '5 min', label: 'From fork to production' },
-  { value: '300+', label: 'CDN PoPs (Cloudflare)' },
+  { value: '400+', label: 'Edge PoPs (Fastly)' },
   { value: '<50ms', label: 'Gateway latency' },
 ]
 
