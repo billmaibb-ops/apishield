@@ -12,6 +12,7 @@ type ApiKey = {
   backendId: string
   createdAt: string
   callsToday: number
+  tokensToday?: number
   authType?: 'api_key' | 'jwt'
 }
 
@@ -133,6 +134,7 @@ export default function DashboardPage() {
   const [newAuthType, setNewAuthType] = useState<'api_key' | 'jwt'>('api_key')
   const [newJwtSecret, setNewJwtSecret] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [testResults, setTestResults] = useState<Record<string, { status: number; ms: number } | 'loading'>>({})
   const [toast, setToast] = useState<string | null>(null)
   const [origin, setOrigin] = useState('https://apishield.vercel.app')
 
@@ -159,9 +161,14 @@ export default function DashboardPage() {
       setConfigured(isConfigured)
 
       if (isConfigured) {
-        setKeys(keysData.keys || [])
         setBackends(backendsData.backends || [])
         setTotalCallsToday(analyticsData.today?.totalCalls || 0)
+        // Merge tokensToday from keyStats into key rows
+        const statsById: Record<string, number> = {}
+        for (const ks of analyticsData.keyStats ?? []) {
+          statsById[ks.id] = ks.tokensToday ?? 0
+        }
+        setKeys(prev => (keysData.keys || []).map((k: ApiKey) => ({ ...k, tokensToday: statsById[k.id] ?? 0 })))
       }
     } catch {
       setConfigured(false)
@@ -228,6 +235,19 @@ export default function DashboardPage() {
     await fetch(`/api/keys/${id}`, { method: 'DELETE' })
     await loadData()
     showToast('Key deleted')
+  }
+
+  const testKey = async (k: ApiKey) => {
+    setTestResults(prev => ({ ...prev, [k.id]: 'loading' }))
+    const t0 = Date.now()
+    try {
+      const res = await fetch('/api/gateway/get', {
+        headers: { 'Authorization': `Bearer ${k.key}` },
+      })
+      setTestResults(prev => ({ ...prev, [k.id]: { status: res.status, ms: Date.now() - t0 } }))
+    } catch {
+      setTestResults(prev => ({ ...prev, [k.id]: { status: 0, ms: Date.now() - t0 } }))
+    }
   }
 
   const activeCount = keys.filter(k => k.status === 'active').length
@@ -477,7 +497,7 @@ export default function DashboardPage() {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  {['Name', 'API Key', 'Auth', 'Backend', 'Status', 'Rate Limit', 'Calls Today', 'Actions'].map(h => (
+                  {['Name', 'API Key', 'Backend', 'Status', 'Rate Limit', 'Calls Today', 'Est. Cost', 'Test', 'Actions'].map(h => (
                     <th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">{h}</th>
                   ))}
                 </tr>
@@ -489,13 +509,6 @@ export default function DashboardPage() {
                     <tr key={k.id} className="hover:bg-gray-50">
                       <td className="px-4 py-4 text-sm font-medium text-gray-900">{k.name}</td>
                       <td className="px-4 py-4 text-sm font-mono text-gray-600">{maskKey(k.key)}</td>
-                      <td className="px-4 py-4">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                          k.authType === 'jwt' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'
-                        }`}>
-                          {k.authType === 'jwt' ? '🔐 JWT' : '🔑 Key'}
-                        </span>
-                      </td>
                       <td className="px-4 py-4 text-sm text-gray-500">
                         {backend ? (
                           <span title={backend.url} className="truncate max-w-[120px] block">{backend.name}</span>
@@ -510,6 +523,33 @@ export default function DashboardPage() {
                       </td>
                       <td className="px-4 py-4 text-sm text-gray-600">{k.rateLimit.toLocaleString()}/min</td>
                       <td className="px-4 py-4 text-sm text-gray-900 font-medium">{k.callsToday.toLocaleString()}</td>
+                      <td className="px-4 py-4 text-sm text-gray-600">
+                        {(k.tokensToday ?? 0) > 0
+                          ? `$${((k.tokensToday! / 1_000_000) * 2).toFixed(4)}`
+                          : <span className="text-gray-300">—</span>
+                        }
+                      </td>
+                      <td className="px-4 py-4">
+                        {k.status === 'active' ? (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => testKey(k)}
+                              disabled={testResults[k.id] === 'loading'}
+                              className="text-xs font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-50">
+                              {testResults[k.id] === 'loading' ? '…' : 'Test'}
+                            </button>
+                            {testResults[k.id] && testResults[k.id] !== 'loading' && (() => {
+                              const r = testResults[k.id] as { status: number; ms: number }
+                              const ok = r.status >= 200 && r.status < 300
+                              return (
+                                <span className={`text-xs px-1.5 py-0.5 rounded font-mono ${ok ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                  {ok ? '✓' : '✗'} {r.status} · {r.ms}ms
+                                </span>
+                              )
+                            })()}
+                          </div>
+                        ) : <span className="text-gray-300 text-xs">—</span>}
+                      </td>
                       <td className="px-4 py-4">
                         <div className="flex items-center gap-2">
                           <button onClick={() => copyKey(k)} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium transition-colors">
